@@ -23,6 +23,7 @@
 use Behat\Behat\Context\Context;
 use Behat\Behat\Hook\Scope\BeforeScenarioScope;
 use TestHelpers\SetupHelper;
+use Behat\Gherkin\Node\TableNode;
 
 require_once 'bootstrap.php';
 
@@ -36,6 +37,11 @@ class OccContext implements Context {
 	 * @var FeatureContext
 	 */
 	private $featureContext;
+
+	/**
+	 * @var string lastDeletedJobId
+	 */
+	private $lastDeletedJobId;
 
 	/**
 	 * @When /^the administrator invokes occ command "([^"]*)"$/
@@ -588,6 +594,73 @@ class OccContext implements Context {
 	}
 
 	/**
+	 * @When the administrator gets all the jobs in the background queue using the occ command
+	 *
+	 * @return void
+	 */
+	public function theAdministratorGetsAllTheJobsInTheBackgroundQueueUsingTheOccCommand() {
+		$this->invokingTheCommand(
+			"background:queue:status"
+		);
+	}
+
+	/**
+	 * @When the administrator deletes last background job :job using the occ command
+	 *
+	 * @param string $job
+	 *
+	 * @return void
+	 */
+	public function theAdministratorDeletesLastBackgroundJobUsingTheOccCommand($job) {
+		$match = $this->getLastJobIdForJob($job);
+		if ($match === false) {
+			throw new \Exception("Couldn't find jobId for given job: $job");
+		}
+		$this->invokingTheCommand(
+			"background:queue:delete $match"
+		);
+		$this->lastDeletedJobId = $match;
+	}
+
+	/**
+	 * @Then the last deleted background job :job should not be listed in the background jobs queue
+	 *
+	 * @param string $job
+	 *
+	 * @return void
+	 */
+	public function theLastDeletedJobShouldNotBeListedInTheJobsQueue($job) {
+		$jobId = $this->lastDeletedJobId;
+		$match = $this->getLastJobIdForJob($job);
+		PHPUnit\Framework\Assert::assertNotEquals(
+			$jobId, $match,
+			"job $job with jobId $jobId" .
+			" was not expected to be listed in background queue, but was"
+		);
+	}
+
+	/**
+	 * @Then the command output table should contain the following text:
+	 *
+	 * @param TableNode $table table of patterns to find with table title as 'table_column'
+	 *
+	 * @return void
+	 */
+	public function theCommandOutputTableShouldContainTheFollowingText(TableNode $table) {
+		$commandOutput = $this->featureContext->getStdOutOfOccCommand();
+		foreach ($table as $row) {
+			$lines = $this->featureContext->findLines(
+				$commandOutput,
+				$row['table_column']
+			);
+			PHPUnit\Framework\Assert::assertNotEmpty(
+				$lines,
+				"Value: " . $row['table_column'] . " not found"
+			);
+		}
+	}
+
+	/**
 	 * @Then system config key :key should have value :value
 	 *
 	 * @param string $key
@@ -688,6 +761,28 @@ class OccContext implements Context {
 			"Delete all versions",
 			\trim($this->featureContext->getStdOutOfOccCommand())
 		);
+	}
+
+	/**
+	 * get jobId of the latest job found of given job class
+	 *
+	 * @param string $job
+	 *
+	 * @return string|boolean
+	 */
+	public function getLastJobIdForJob($job) {
+		$this->theAdministratorGetsAllTheJobsInTheBackgroundQueueUsingTheOccCommand();
+		$commandOutput = $this->featureContext->getStdOutOfOccCommand();
+		$lines = $this->featureContext->findLines(
+			$commandOutput,
+			$job
+		);
+		// find the jobId of the newest job among the jobs with given class
+		$success = \preg_match("/\d+/", \end($lines), $match);
+		if ($success) {
+			return $match[0];
+		}
+		return false;
 	}
 
 	/**
